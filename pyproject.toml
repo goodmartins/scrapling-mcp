@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrapling-mcp"
+version = "0.1.0"
+description = "MCP server for Scrapling web scraping framework"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=0.8.0",
+    "scrapling>=0.8.0",
+    "pydantic>=2.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "mypy>=1.0",
+]
