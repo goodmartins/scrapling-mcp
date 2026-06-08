@@ -1,39 +1,42 @@
 #!/usr/bin/env python3
-"""MCP server for Scrapling web scraping framework."""
+"""MCP server for Scrapling web scraping framework — HTTP/SSE transport."""
 
 import asyncio
 import json
+import os
 from typing import Any
-from pathlib import Path
+
 from mcp.server import Server
+from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent, ToolResult
 import mcp.types as types
 from pydantic import BaseModel, Field
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
+import uvicorn
 
 try:
     from scrapling.fetchers import Fetcher
-    from scrapling.spiders import Spider
 except ImportError:
     raise ImportError("Scrapling not installed. Run: pip install scrapling[fetchers]")
 
 
-# Global state for crawl jobs
-CRAWL_JOBS = {}
+CRAWL_JOBS: dict = {}
 JOB_COUNTER = 0
 
 
 class ScraplingError(Exception):
-    """Scrapling-specific error."""
     pass
 
 
 class ScrapePage(BaseModel):
-    """Response from scraping a page."""
     url: str
     status: str
-    content: str = Field(default="", description="Extracted text content")
-    html: str = Field(default="", description="Raw HTML if requested")
-    error: str = Field(default="", description="Error message if failed")
+    content: str = Field(default="")
+    html: str = Field(default="")
+    error: str = Field(default="")
 
 
 async def scrape_single_url(
@@ -42,29 +45,23 @@ async def scrape_single_url(
     include_html: bool = False,
     timeout: int = 30,
 ) -> ScrapePage:
-    """Scrape a single URL using Scrapling fetcher."""
     try:
         if use_stealth:
             page = await asyncio.to_thread(Fetcher.get, url, stealth=True)
         else:
             page = await asyncio.to_thread(Fetcher.get, url)
 
-        # Extract text content
-        text_content = page.text_content() if hasattr(page, 'text_content') else str(page)
-        html_content = page.html if include_html and hasattr(page, 'html') else ""
+        text_content = page.text_content() if hasattr(page, "text_content") else str(page)
+        html_content = page.html if include_html and hasattr(page, "html") else ""
 
         return ScrapePage(
             url=url,
             status="success",
-            content=text_content[:5000],  # Limit output
+            content=text_content[:5000],
             html=html_content[:10000] if html_content else "",
         )
     except Exception as e:
-        return ScrapePage(
-            url=url,
-            status="error",
-            error=str(e),
-        )
+        return ScrapePage(url=url, status="error", error=str(e))
 
 
 async def scrape_with_selector(
@@ -73,23 +70,20 @@ async def scrape_with_selector(
     selector_type: str = "css",
     use_stealth: bool = False,
 ) -> dict[str, Any]:
-    """Scrape URL and extract with CSS or XPath selector."""
     try:
-        page = await asyncio.to_thread(
-            Fetcher.get, url, stealth=use_stealth
-        )
+        page = await asyncio.to_thread(Fetcher.get, url, stealth=use_stealth)
 
         if selector_type == "xpath":
-            results = page.xpath(selector).getall() if hasattr(page, 'xpath') else []
-        else:  # css
-            results = page.css(selector).getall() if hasattr(page, 'css') else []
+            results = page.xpath(selector).getall() if hasattr(page, "xpath") else []
+        else:
+            results = page.css(selector).getall() if hasattr(page, "css") else []
 
         return {
             "url": url,
             "selector": selector,
             "selector_type": selector_type,
             "matches": len(results),
-            "results": results[:20],  # Limit to 20 results
+            "results": results[:20],
             "status": "success",
         }
     except Exception as e:
@@ -103,7 +97,6 @@ async def scrape_with_selector(
 
 
 def create_mcp_server() -> Server:
-    """Create and configure MCP server."""
     server = Server("scrapling-mcp")
 
     @server.list_tools()
@@ -115,10 +108,7 @@ def create_mcp_server() -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "URL to scrape",
-                        },
+                        "url": {"type": "string", "description": "URL to scrape"},
                         "use_stealth": {
                             "type": "boolean",
                             "description": "Use stealth mode to bypass anti-bot",
@@ -144,10 +134,7 @@ def create_mcp_server() -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "URL to scrape",
-                        },
+                        "url": {"type": "string", "description": "URL to scrape"},
                         "selector": {
                             "type": "string",
                             "description": "CSS selector or XPath expression",
@@ -190,16 +177,12 @@ def create_mcp_server() -> Server:
             Tool(
                 name="health_check",
                 description="Check Scrapling server health and availability",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                },
+                inputSchema={"type": "object", "properties": {}},
             ),
         ]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Handle tool calls."""
         try:
             if name == "scrape_url":
                 result = await scrape_single_url(
@@ -239,12 +222,9 @@ def create_mcp_server() -> Server:
                 results = []
 
                 for url in urls:
-                    result = await scrape_single_url(
-                        url=url,
-                        use_stealth=use_stealth,
-                    )
+                    result = await scrape_single_url(url=url, use_stealth=use_stealth)
                     results.append(result.model_dump())
-                    await asyncio.sleep(1)  # Rate limiting
+                    await asyncio.sleep(1)
 
                 return ToolResult(
                     content=[
@@ -265,11 +245,7 @@ def create_mcp_server() -> Server:
                         TextContent(
                             type="text",
                             text=json.dumps(
-                                {
-                                    "status": "healthy",
-                                    "service": "scrapling-mcp",
-                                    "version": "0.1.0",
-                                },
+                                {"status": "healthy", "service": "scrapling-mcp", "version": "0.2.0"},
                                 indent=2,
                             ),
                         )
@@ -278,36 +254,44 @@ def create_mcp_server() -> Server:
 
             else:
                 return ToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=f"Unknown tool: {name}",
-                        )
-                    ],
+                    content=[TextContent(type="text", text=f"Unknown tool: {name}")],
                     isError=True,
                 )
 
         except Exception as e:
             return ToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"Error: {str(e)}",
-                    )
-                ],
+                content=[TextContent(type="text", text=f"Error: {str(e)}")],
                 isError=True,
             )
 
     return server
 
 
-async def main():
-    """Run the MCP server."""
-    server = create_mcp_server()
-    async with server:
-        print("Scrapling MCP server running on stdio")
-        await server.wait_for_shutdown()
+def create_app() -> Starlette:
+    mcp_server = create_mcp_server()
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request: Request):
+        async with sse.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await mcp_server.run(
+                streams[0], streams[1], mcp_server.create_initialization_options()
+            )
+
+    async def health(request: Request):
+        return JSONResponse({"status": "ok", "service": "scrapling-mcp", "version": "0.2.0"})
+
+    return Starlette(
+        routes=[
+            Route("/health", endpoint=health),
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ]
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.environ.get("PORT", 8000))
+    app = create_app()
+    uvicorn.run(app, host="0.0.0.0", port=port)
