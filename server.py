@@ -18,7 +18,7 @@ from starlette.routing import Mount, Route
 import uvicorn
 
 try:
-    from scrapling.fetchers import Fetcher
+    from scrapling.fetchers import Fetcher, StealthyFetcher
 except ImportError:
     raise ImportError("Scrapling not installed. Run: pip install scrapling[fetchers]")
 
@@ -47,12 +47,12 @@ async def scrape_single_url(
 ) -> ScrapePage:
     try:
         if use_stealth:
-            page = await asyncio.to_thread(Fetcher.get, url, stealth=True)
+            page = await asyncio.to_thread(StealthyFetcher.fetch, url)
         else:
             page = await asyncio.to_thread(Fetcher.get, url)
 
-        text_content = page.text_content() if hasattr(page, "text_content") else str(page)
-        html_content = page.html if include_html and hasattr(page, "html") else ""
+        text_content = page.get_all_text() if hasattr(page, "get_all_text") else ""
+        html_content = page.html_content if include_html and hasattr(page, "html_content") else ""
 
         return ScrapePage(
             url=url,
@@ -71,7 +71,10 @@ async def scrape_with_selector(
     use_stealth: bool = False,
 ) -> dict[str, Any]:
     try:
-        page = await asyncio.to_thread(Fetcher.get, url, stealth=use_stealth)
+        if use_stealth:
+            page = await asyncio.to_thread(StealthyFetcher.fetch, url)
+        else:
+            page = await asyncio.to_thread(Fetcher.get, url)
 
         if selector_type == "xpath":
             results = page.xpath(selector).getall() if hasattr(page, "xpath") else []
