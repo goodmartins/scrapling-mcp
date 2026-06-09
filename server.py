@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
-from mcp.types import Tool, TextContent, ToolResult
+from mcp.types import Tool, TextContent
 import mcp.types as types
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
@@ -182,7 +182,7 @@ def create_mcp_server() -> Server:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         try:
             if name == "scrape_url":
                 result = await scrape_single_url(
@@ -191,14 +191,7 @@ def create_mcp_server() -> Server:
                     include_html=arguments.get("include_html", False),
                     timeout=arguments.get("timeout", 30),
                 )
-                return ToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=json.dumps(result.model_dump(), indent=2, ensure_ascii=False),
-                        )
-                    ]
-                )
+                return [TextContent(type="text", text=json.dumps(result.model_dump(), indent=2, ensure_ascii=False))]
 
             elif name == "scrape_with_selector":
                 result = await scrape_with_selector(
@@ -207,14 +200,7 @@ def create_mcp_server() -> Server:
                     selector_type=arguments.get("selector_type", "css"),
                     use_stealth=arguments.get("use_stealth", False),
                 )
-                return ToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=json.dumps(result, indent=2, ensure_ascii=False),
-                        )
-                    ]
-                )
+                return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
 
             elif name == "batch_scrape":
                 urls = arguments["urls"]
@@ -226,43 +212,16 @@ def create_mcp_server() -> Server:
                     results.append(result.model_dump())
                     await asyncio.sleep(1)
 
-                return ToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {"urls_scraped": len(urls), "results": results},
-                                indent=2,
-                                ensure_ascii=False,
-                            ),
-                        )
-                    ]
-                )
+                return [TextContent(type="text", text=json.dumps({"urls_scraped": len(urls), "results": results}, indent=2, ensure_ascii=False))]
 
             elif name == "health_check":
-                return ToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {"status": "healthy", "service": "scrapling-mcp", "version": "0.2.0"},
-                                indent=2,
-                            ),
-                        )
-                    ]
-                )
+                return [TextContent(type="text", text=json.dumps({"status": "healthy", "service": "scrapling-mcp", "version": "0.2.0"}, indent=2))]
 
             else:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"Unknown tool: {name}")],
-                    isError=True,
-                )
+                return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
         except Exception as e:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"Error: {str(e)}")],
-                isError=True,
-            )
+            return [TextContent(type="text", text=f"Error: {str(e)}")]
 
     return server
 
